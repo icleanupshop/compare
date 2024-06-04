@@ -2,100 +2,117 @@ package main
 
 import (
 	"console/internal/hcl"
-	"fmt"
-	"html/template"
+	"flag"
+	"github.com/go-git/go-git/v5"
+	//"github.com/src-d/go-git"
+	"log"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
-type Report struct {
-	ReportName      string
-	IsModule        bool
-	Environments    []Environment
-	ReportLineItems []ReportLineItem
-}
+const (
+	modelHelpMessage                 = "The full path to the TFVars file to use as the model."
+	targetTFVarsDirectoryHelpMessage = "The full path to the directory where the TFVars for comparison reside."
+	gitSourceConfigRepoHelpMessage   = "This is the HTTP path to the git repo holding the config for comparison."
+	gitSourceConfigBranchHelpMessage = "This is the branch to use for the config comparison."
+	gitSourceConfigRepoTmpDir        = "/tmp/console"
+)
 
-type Environment struct {
-	Name   string
-	TFVars *tfvars.Tfvars
-}
+var (
+	tfvarsDir             = "test/hcl"
+	modelTFVarsFile       = "./test/hcl/sample.tfvars"
+	gitSourceConfigRepo   = "https://github.com/icleanupshop/compare.git"
+	gitSourceConfigBranch = "main"
+)
 
-type ReportLineItem struct {
-	KeyName string
-	Values  []ReportLineItemValue
-}
+func getTFVarsFiles(root string) []string {
 
-type ReportLineItemValue struct {
-	Environment string
-	Value       string
-}
+	files, err := filepath.Glob(root + "**/**/*.tfvars")
 
-func compare(m *tfvars.Tfvars, t *tfvars.Tfvars, r *Report) {
-	//compare sample keys to target keys
-	fmt.Println("Mode,sample,target")
-	for _, v := range m.Keys() {
-		rl := ReportLineItem{KeyName: v}
-		//Get the model key from the target environments
-		for _, targetEnv := range r.Environments {
-			//Pull the model key from the target
-			tv := targetEnv.TFVars.Get(v)
-
-			//Add the target value to the report
-			rl.Values = append(rl.Values, ReportLineItemValue{Environment: targetEnv.Name, Value: tv})
-		}
-		r.ReportLineItems = append(r.ReportLineItems, rl)
-	}
-}
-
-func createReport(r *Report) {
-	funcMap := template.FuncMap{
-		"dec": func(i int) int { return i - 1 },
-	}
-
-	var tmplFile = "report-html.tmpl"
-	tmpl, err := template.New(tmplFile).Funcs(funcMap).ParseFiles(tmplFile)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
+
 	}
-	var f *os.File
-	f, err = os.Create("pets.html")
-	if err != nil {
-		panic(err)
+	return files
+}
+
+func getConfigRepo(r string) {
+	// Clone the given repository to the given directory
+
+	_, err := git.PlainClone(gitSourceConfigRepoTmpDir, false, &git.CloneOptions{
+		URL:      r,
+		Progress: os.Stdout,
+	})
+	if err != nil && err.Error() != "repository already exists" {
+		log.Panic(err)
+
 	}
-	err = tmpl.Execute(f, r)
-	if err != nil {
-		panic(err)
-	}
-	err = f.Close()
-	if err != nil {
-		panic(err)
-	}
+
 }
 
 func main() {
+	//Get the date and time
+	now := time.Now()
+	log.Println("Current date and time:", now)
+
 	//Discover the environments as target for comparision with the model
-	model, err := tfvars.New("/home/mj/projects/console/test/hcl/sample.tfvars")
-	if err != nil {
-		panic(err)
-	}
-	sample, err := tfvars.New("/home/mj/projects/console/test/hcl/sample.tfvars")
+
+	flag.StringVar(&modelTFVarsFile, "model", modelTFVarsFile, modelHelpMessage)
+	flag.StringVar(&tfvarsDir, "tfvarsDir", tfvarsDir, targetTFVarsDirectoryHelpMessage)
+	flag.StringVar(&gitSourceConfigRepo, "sourceRepo", gitSourceConfigRepo, gitSourceConfigRepoHelpMessage)
+	flag.StringVar(&gitSourceConfigBranch, "sourceRepoBranch", gitSourceConfigBranch, gitSourceConfigBranchHelpMessage)
+	flag.Parse()
+
+	//Get the module TFVars file
+	model, err := tfvars.New(modelTFVarsFile)
 	if err != nil {
 		panic(err)
 	}
 
-	target, err := tfvars.New("/home/mj/projects/console/test/hcl/target.tfvars")
-	if err != nil {
-		panic(err)
+	//Collect a list of target TFVars files
+	files := getTFVarsFiles(gitSourceConfigRepoTmpDir + "/" + tfvarsDir)
+	if len(files) == 0 {
+		log.Println("Exiting, no TFVars files found in", gitSourceConfigRepoTmpDir+"/"+tfvarsDir)
+		os.Exit(0)
+
 	}
 
-	se := Environment{Name: "sample", TFVars: sample}
-	te := Environment{Name: "target", TFVars: target}
+	defer os.Remove(gitSourceConfigRepoTmpDir)
+	getConfigRepo(gitSourceConfigRepo)
 
 	tfr := Report{}
-	tfr.Environments = []Environment{se, te}
-	tfr.ReportName = "GSS Terraform Config Report"
+	tfr.Environments = []Environment{}
+	tfr.ReportName = "GSS Terraform Config Report - " + now.String()
+	tfr.ModelFile = modelTFVarsFile
 
-	compare(model, target, &tfr)
+	/*files, e := OSReadDir(tfvarsDir)
+	if e != nil {
+		log.Panic(e)
 
-	createReport(&tfr)
+	}*/
+
+	//loop through list of TFVar files and extract meta data
+	for _, f := range files {
+		log.Println("Processing file ", f)
+
+		p := strings.Split(f, "/")
+		client := p[len(p)-2]
+		e := p[len(p)-1]
+		sample, err := tfvars.New(f)
+		se := Environment{Name: strings.Split(e, ".")[0] + "-" + client, TFVars: sample, PathToTFVarsFile: f}
+		tfr.Environments = append(tfr.Environments, se)
+
+		if err != nil {
+			panic(err)
+		}
+
+	}
+	Compare(model, &tfr)
+
+	CreateReport(&tfr)
+
+	log.Println("Done.")
 
 }

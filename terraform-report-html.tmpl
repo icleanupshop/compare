@@ -1,0 +1,21 @@
+<figure class="image"><img src="https://www.gss-rose.com/wp-content/uploads/2023/08/logo-primary.svg" width="0" height="0"></figure>
+<hr>
+
+
+<h1>{{.ReportName}}</h1>
+<h1>The Model this report uses as a baseline: {{.ModelFile}}</h1>
+<ul>
+    {{range .ReportLineItems}}
+<dl>
+        <dt>Model Key: {{ .KeyName }}</dt>
+        {{range .Values }}
+            <dt>Environment: {{ .Environment }} Value= {{ .Value }}</dt>
+        {{end}}
+        <hr>
+</dl>
+
+
+
+
+    {{end}}
+</ul>
