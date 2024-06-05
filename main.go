@@ -65,6 +65,15 @@ func main() {
 	flag.StringVar(&gitSourceConfigBranch, "sourceRepoBranch", gitSourceConfigBranch, gitSourceConfigBranchHelpMessage)
 	flag.Parse()
 
+	defer func() {
+		err := os.Remove(gitSourceConfigRepoTmpDir)
+		if err != nil {
+			log.Println(err)
+		}
+	}()
+
+	getConfigRepo(gitSourceConfigRepo)
+
 	//Get the module TFVars file
 	model, err := tfvars.New(modelTFVarsFile)
 	if err != nil {
@@ -79,19 +88,10 @@ func main() {
 
 	}
 
-	defer os.Remove(gitSourceConfigRepoTmpDir)
-	getConfigRepo(gitSourceConfigRepo)
-
 	tfr := Report{}
 	tfr.Environments = []Environment{}
 	tfr.ReportName = "GSS Terraform Config Report - " + now.String()
 	tfr.ModelFile = modelTFVarsFile
-
-	/*files, e := OSReadDir(tfvarsDir)
-	if e != nil {
-		log.Panic(e)
-
-	}*/
 
 	//loop through list of TFVar files and extract meta data
 	for _, f := range files {
